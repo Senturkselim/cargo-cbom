@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.json linguist-generated=false
+tests/fixtures/*.json -diff linguist-generated=true
+tests/schema/*.json -diff linguist-vendored=true

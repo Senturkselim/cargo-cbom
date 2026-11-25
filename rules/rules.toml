@@ -1,0 +1,1014 @@
+# cargo-cbom rules (schema 1)
+#
+# Each [[rule]] matches one crate. Optional filters:
+#   versions       comma-separated comparisons with full versions, e.g. ">=0.23.22, <0.24.0-0"
+#                  (pre-releases follow normal semver precedence; build metadata is ignored)
+#   features_all   every listed Cargo feature is enabled on that crate
+#   features_any   at least one listed feature is enabled
+#   features_none  none of the listed features is enabled
+#   group          rules in the same group are tried in file order; the first match wins
+#
+# `status` is the verdict for the project. Each algorithm's `status` describes the
+# algorithm itself. If `status` is omitted, the worst algorithm status is used.
+#
+# Statuses:   classically-broken, known-vulnerable, quantum-vulnerable, pre-standard-pq,
+#             depends, symmetric, hybrid, post-quantum
+# Primitives: drbg, mac, block-cipher, stream-cipher, signature, hash, pke, xof, kdf,
+#             key-agree, kem, ae, combiner, other, unknown (CycloneDX 1.6)
+#
+# Every rule needs a `reference`. Claims about specific versions were checked against
+# the published crate sources; notes name the version that was checked.
+
+schema = 1
+
+# ---------------------------------------------------------------------------
+# TLS: rustls key exchange. The provider and the `prefer-post-quantum` feature
+# decide whether the hybrid X25519MLKEM768 group is used.
+# Checked against rustls 0.23.21, 0.23.22, 0.23.26, 0.23.27 and 0.23.46.
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "rustls-0-24-preview"
+crate = "rustls"
+group = "rustls-kx"
+versions = ">=0.24.0-0"
+title = "rustls 0.24 preview, not modeled yet"
+category = "tls"
+status = "depends"
+note = "rustls 0.24 changes how crypto providers are packaged and cargo-cbom does not model it yet. Check which provider your application installs."
+reference = "https://github.com/rustls/rustls"
+
+[[rule]]
+id = "rustls-legacy"
+crate = "rustls"
+group = "rustls-kx"
+versions = "<0.23.0"
+title = "rustls before 0.23, classical only"
+category = "tls"
+status = "quantum-vulnerable"
+note = "rustls before 0.23 only offers classical key exchange (X25519, P-256, P-384)."
+fix = "Upgrade to rustls 0.23.27 or later with the aws-lc-rs provider, where X25519MLKEM768 is preferred by default."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-256", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-384", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "rustls-custom-provider"
+crate = "rustls"
+group = "rustls-kx"
+features_any = ["custom-provider"]
+title = "custom crypto provider"
+category = "tls"
+status = "depends"
+note = "The `custom-provider` feature is enabled, so the application supplies its own CryptoProvider and key exchange depends on it."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+
+[[rule]]
+id = "rustls-two-providers"
+crate = "rustls"
+group = "rustls-kx"
+features_all = ["aws_lc_rs", "ring"]
+title = "aws-lc-rs and ring both compiled in"
+category = "tls"
+status = "depends"
+note = "With both providers compiled in, rustls cannot pick a default from crate features: the provider your code installs, or the one a dependency chooses, decides. aws-lc-rs offers X25519MLKEM768; ring has no post-quantum key exchange."
+fix = "Call `rustls::crypto::aws_lc_rs::default_provider().install_default()` at startup and enable rustls' `prefer-post-quantum` feature."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+
+[[rule]]
+id = "rustls-ring"
+crate = "rustls"
+group = "rustls-kx"
+features_all = ["ring"]
+features_none = ["aws_lc_rs"]
+title = "ring provider, no post-quantum groups"
+category = "tls"
+status = "quantum-vulnerable"
+note = "The ring provider only offers X25519, P-256 and P-384 key exchange; it has no post-quantum groups (checked in rustls 0.23.46)."
+fix = "Switch to the aws-lc-rs provider: enable rustls' `aws_lc_rs` and `prefer-post-quantum` features (rustls 0.23.27+) and call `rustls::crypto::aws_lc_rs::default_provider().install_default()` at startup. Some clients, such as ureq 3, use ring unless a provider is installed."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-256", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-384", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "rustls-aws-lc-rs-before-pq"
+crate = "rustls"
+group = "rustls-kx"
+versions = "<0.23.22"
+features_all = ["aws_lc_rs"]
+title = "aws-lc-rs provider without a built-in post-quantum group"
+category = "tls"
+status = "quantum-vulnerable"
+note = "rustls before 0.23.22 has no built-in post-quantum key exchange; it needed the separate rustls-post-quantum crate."
+fix = "Upgrade to rustls 0.23.27 or later, where X25519MLKEM768 is built in and preferred by default."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-256", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-384", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "rustls-pq-preferred"
+crate = "rustls"
+group = "rustls-kx"
+versions = ">=0.23.22"
+features_all = ["aws_lc_rs", "prefer-post-quantum"]
+title = "aws-lc-rs provider, post-quantum preferred"
+category = "tls"
+status = "hybrid"
+note = "X25519MLKEM768 is offered first. Classical X25519, P-256 and P-384 remain as fallbacks for peers without post-quantum support."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+algorithms = [
+  { name = "X25519MLKEM768", primitive = "kem", status = "hybrid", nist_level = 3 },
+]
+
+[[rule]]
+id = "rustls-pq-not-preferred"
+crate = "rustls"
+group = "rustls-kx"
+versions = ">=0.23.22"
+features_all = ["aws_lc_rs"]
+features_none = ["prefer-post-quantum"]
+title = "aws-lc-rs provider, post-quantum not preferred"
+category = "tls"
+status = "depends"
+note = "X25519MLKEM768 is supported but offered last. As a TLS client, rustls starts with a classical X25519 key share, so the hybrid group is used only if the server asks for it (HelloRetryRequest). As a server, rustls follows the client's preference."
+fix = "Enable rustls' `prefer-post-quantum` feature in your own Cargo.toml, e.g. `rustls = { version = \"0.23.27\", default-features = false, features = [\"prefer-post-quantum\"] }`. Cargo's feature unification applies it to the rustls your dependencies use."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+algorithms = [
+  { name = "X25519MLKEM768", primitive = "kem", status = "hybrid", nist_level = 3 },
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "rustls-no-builtin-provider"
+crate = "rustls"
+group = "rustls-kx"
+features_none = ["aws_lc_rs", "ring"]
+title = "no built-in provider"
+category = "tls"
+status = "depends"
+note = "Neither the aws-lc-rs nor the ring provider is enabled, so the application installs another CryptoProvider and key exchange depends on it."
+reference = "https://docs.rs/rustls/latest/rustls/#cryptography-providers"
+
+[[rule]]
+id = "rustls-post-quantum"
+crate = "rustls-post-quantum"
+title = "rustls-post-quantum provider (only if installed)"
+category = "tls"
+status = "depends"
+note = "Provides a CryptoProvider with X25519MLKEM768 that only takes effect if your code installs it. Since rustls 0.23.22 the same key exchange is built into rustls."
+fix = "On rustls 0.23.27+, the built-in aws-lc-rs provider with `prefer-post-quantum` gives the same key exchange."
+reference = "https://docs.rs/rustls-post-quantum"
+algorithms = [
+  { name = "X25519MLKEM768", primitive = "kem", status = "hybrid", nist_level = 3 },
+]
+
+[[rule]]
+id = "ureq-ring-default"
+crate = "ureq"
+versions = ">=3.5.0, <4.0.0"
+features_all = ["_ring"]
+title = "ureq selects ring unless a provider is installed"
+category = "tls"
+status = "depends"
+note = "ureq 3 uses the provider set in its TlsConfig, then the process-wide rustls default, then ring (checked in 3.5.2). ring has no post-quantum key exchange, so enabling aws-lc-rs features alone does not change ureq's TLS."
+fix = "Install `rustls::crypto::aws_lc_rs::default_provider()` as the process default at startup, or pass it in ureq's TlsConfig."
+reference = "https://docs.rs/ureq"
+
+# ---------------------------------------------------------------------------
+# TLS: BoringSSL, OpenSSL and platform TLS
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "boring-pq-default"
+crate = "boring"
+group = "boring-kx"
+versions = ">=5.3.0"
+title = "BoringSSL, X25519MLKEM768 by default"
+category = "tls"
+status = "hybrid"
+note = "boring 5.3 and later document that BoringSSL supports and enables X25519MLKEM768 by default."
+reference = "https://docs.rs/boring/latest/boring/#post-quantum-cryptography"
+algorithms = [
+  { name = "X25519MLKEM768", primitive = "kem", status = "hybrid", nist_level = 3 },
+]
+
+[[rule]]
+id = "boring-before-pq-default"
+crate = "boring"
+group = "boring-kx"
+versions = "<5.3.0"
+title = "older boring, no ML-KEM by default"
+category = "tls"
+status = "depends"
+note = "Older boring releases document only the pre-standard X25519Kyber768Draft00 hybrid, behind an opt-in feature."
+fix = "Upgrade to boring 5.3.0 or later, where X25519MLKEM768 is enabled by default."
+reference = "https://docs.rs/boring/latest/boring/#post-quantum-cryptography"
+
+[[rule]]
+id = "boring-general"
+crate = "boring"
+title = "BoringSSL bindings (general-purpose crypto)"
+status = "depends"
+note = "Exposes classical public-key algorithms; recent releases also have optional `mlkem` and `mldsa` modules (checked in 5.6.0). Which ones are used depends on your code."
+reference = "https://docs.rs/boring"
+algorithms = [
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "openssl-src-pq"
+crate = "openssl-src"
+group = "openssl-src-tls"
+versions = ">=300.5.0"
+title = "vendored OpenSSL 3.5+, X25519MLKEM768 by default"
+category = "tls"
+status = "hybrid"
+note = "OpenSSL 3.5 and later put X25519MLKEM768 in the default TLS group list and ship ML-KEM, ML-DSA and SLH-DSA."
+reference = "https://developers.cloudflare.com/ssl/post-quantum-cryptography/pqc-support/"
+algorithms = [
+  { name = "X25519MLKEM768", primitive = "kem", status = "hybrid", nist_level = 3 },
+  { name = "ML-KEM", primitive = "kem", status = "post-quantum" },
+  { name = "ML-DSA", primitive = "signature", status = "post-quantum" },
+  { name = "SLH-DSA", primitive = "signature", status = "post-quantum" },
+]
+
+[[rule]]
+id = "openssl-src-before-pq"
+crate = "openssl-src"
+group = "openssl-src-tls"
+versions = "<300.5.0"
+title = "vendored OpenSSL before 3.5, classical only"
+category = "tls"
+status = "quantum-vulnerable"
+note = "OpenSSL before 3.5 has no built-in ML-KEM, so TLS key exchange is classical."
+fix = "Upgrade openssl-src to 300.5.0 or later (OpenSSL 3.5+)."
+reference = "https://developers.cloudflare.com/ssl/post-quantum-cryptography/pqc-support/"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ECDH P-256", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "openssl-sys-system"
+crate = "openssl-sys"
+features_none = ["vendored"]
+title = "system OpenSSL, depends on its version"
+category = "tls"
+status = "depends"
+note = "Links the OpenSSL (or compatible library) installed on the build machine. TLS uses X25519MLKEM768 by default only with OpenSSL 3.5 or later; check with `openssl version`."
+reference = "https://docs.rs/openssl"
+
+[[rule]]
+id = "openssl-general"
+crate = "openssl"
+title = "OpenSSL bindings (general-purpose crypto)"
+status = "depends"
+note = "Exposes many algorithms; which ones are used depends on your code. Post-quantum algorithms need OpenSSL 3.5 or later underneath."
+reference = "https://docs.rs/openssl"
+algorithms = [
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "RSA", primitive = "pke", functions = ["encrypt", "decrypt"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "native-tls"
+crate = "native-tls"
+title = "platform TLS library"
+category = "tls"
+status = "depends"
+note = "Uses the operating system's TLS library (OpenSSL on Linux, Schannel on Windows, Security.framework on Apple platforms). Post-quantum key exchange depends on that library; on Linux it needs OpenSSL 3.5 or later."
+reference = "https://docs.rs/native-tls"
+
+# ---------------------------------------------------------------------------
+# General-purpose crypto libraries
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "aws-lc-rs"
+crate = "aws-lc-rs"
+title = "AWS-LC (general-purpose crypto library)"
+status = "depends"
+note = "Provides classical and post-quantum algorithms: ML-KEM in the `kem` module and ML-DSA in the `signature` module (checked in 1.19.0). Which ones are used depends on your code and dependencies."
+reference = "https://docs.rs/aws-lc-rs"
+algorithms = [
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "512", status = "post-quantum", nist_level = 1 },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "768", status = "post-quantum", nist_level = 3 },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "1024", status = "post-quantum", nist_level = 5 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "44", status = "post-quantum", nist_level = 2 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "65", status = "post-quantum", nist_level = 3 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "87", status = "post-quantum", nist_level = 5 },
+]
+
+[[rule]]
+id = "ring"
+crate = "ring"
+title = "ring (general-purpose crypto library)"
+status = "depends"
+note = "Offers only classical public-key algorithms (RSA, ECDSA, Ed25519, X25519/ECDH) and no post-quantum algorithms (checked in 0.17.14)."
+reference = "https://docs.rs/ring"
+algorithms = [
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "AES-GCM", primitive = "ae", status = "symmetric" },
+  { name = "ChaCha20-Poly1305", primitive = "ae", status = "symmetric" },
+  { name = "SHA-2", primitive = "hash", status = "symmetric" },
+  { name = "HMAC", primitive = "mac", status = "symmetric" },
+]
+
+[[rule]]
+id = "libsodium-sys-stable"
+crate = "libsodium-sys-stable"
+title = "libsodium bindings"
+status = "depends"
+note = "Classical X25519 and Ed25519; libsodium 1.0.22 (bundled by 1.24.6) also exposes ML-KEM-768 and the X-Wing KEM. Which ones are used depends on your code."
+reference = "https://docs.rs/libsodium-sys-stable"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "768", status = "post-quantum", nist_level = 3 },
+  { name = "X-Wing", primitive = "kem", status = "hybrid", nist_level = 3 },
+]
+
+[[rule]]
+id = "sodiumoxide"
+crate = "sodiumoxide"
+title = "sodiumoxide (libsodium wrapper)"
+status = "depends"
+note = "No release since 0.2.7 (2021). Its public-key algorithms are classical."
+fix = "Consider a maintained library; for post-quantum key exchange see ml-kem or x-wing."
+reference = "https://docs.rs/sodiumoxide"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "XSalsa20-Poly1305", primitive = "ae", status = "symmetric" },
+]
+
+# ---------------------------------------------------------------------------
+# Classical public-key crates (broken by Shor's algorithm)
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "rsa"
+crate = "rsa"
+title = "RSA (RustCrypto)"
+reference = "https://docs.rs/rsa"
+algorithms = [
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "RSA", primitive = "pke", functions = ["encrypt", "decrypt"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "p256"
+crate = "p256"
+title = "NIST P-256 (RustCrypto)"
+note = "ECDSA and ECDH are available depending on the crate's `ecdsa` and `ecdh` features."
+reference = "https://docs.rs/p256"
+algorithms = [
+  { name = "ECDSA P-256", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDH P-256", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "p384"
+crate = "p384"
+title = "NIST P-384 (RustCrypto)"
+note = "ECDSA and ECDH are available depending on the crate's `ecdsa` and `ecdh` features."
+reference = "https://docs.rs/p384"
+algorithms = [
+  { name = "ECDSA P-384", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDH P-384", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "p521"
+crate = "p521"
+title = "NIST P-521 (RustCrypto)"
+note = "ECDSA and ECDH are available depending on the crate's `ecdsa` and `ecdh` features."
+reference = "https://docs.rs/p521"
+algorithms = [
+  { name = "ECDSA P-521", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDH P-521", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "k256"
+crate = "k256"
+title = "secp256k1 (RustCrypto)"
+reference = "https://docs.rs/k256"
+algorithms = [
+  { name = "ECDSA secp256k1", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Schnorr secp256k1 (BIP-340)", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDH secp256k1", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "ecdsa"
+crate = "ecdsa"
+title = "ECDSA (RustCrypto, generic)"
+reference = "https://docs.rs/ecdsa"
+algorithms = [
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "ed25519-dalek"
+crate = "ed25519-dalek"
+title = "Ed25519 (dalek)"
+reference = "https://docs.rs/ed25519-dalek"
+algorithms = [
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "ed25519"
+crate = "ed25519"
+title = "Ed25519 signature types"
+note = "Key and signature types; the signing implementation comes from another crate."
+reference = "https://docs.rs/ed25519"
+algorithms = [
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "ed25519-compact"
+crate = "ed25519-compact"
+title = "Ed25519 (ed25519-compact)"
+reference = "https://docs.rs/ed25519-compact"
+algorithms = [
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "x25519-dalek"
+crate = "x25519-dalek"
+title = "X25519 key agreement (dalek)"
+reference = "https://docs.rs/x25519-dalek"
+algorithms = [
+  { name = "X25519", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "curve25519-dalek"
+crate = "curve25519-dalek"
+title = "Curve25519 arithmetic (dalek)"
+note = "Group arithmetic used by Ed25519, X25519 and Ristretto255 constructions."
+reference = "https://docs.rs/curve25519-dalek"
+algorithms = [
+  { name = "Curve25519", primitive = "other", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "ed448-goldilocks"
+crate = "ed448-goldilocks"
+title = "Ed448-Goldilocks"
+note = "The crate README states the code has not been audited."
+reference = "https://docs.rs/ed448-goldilocks"
+algorithms = [
+  { name = "Ed448", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "dsa"
+crate = "dsa"
+title = "DSA (RustCrypto)"
+reference = "https://docs.rs/dsa"
+algorithms = [
+  { name = "DSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "ssh-key"
+crate = "ssh-key"
+title = "SSH keys (RustCrypto)"
+note = "All supported key types are classical (checked in 0.6.7)."
+reference = "https://docs.rs/ssh-key"
+algorithms = [
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+# ---------------------------------------------------------------------------
+# Tokens, certificates and HPKE
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "jsonwebtoken"
+crate = "jsonwebtoken"
+title = "JSON Web Tokens (jsonwebtoken)"
+status = "depends"
+note = "Supports HMAC (HS*), RSA (RS*, PS*), ECDSA (ES*) and Ed25519 (EdDSA), but not ML-DSA (checked in 12.0.0). RSA, ECDSA and Ed25519 tokens are quantum-vulnerable; HMAC tokens are not."
+fix = "For post-quantum JWTs, jwt-simple 0.13+ supports ML-DSA (RFC 9964)."
+reference = "https://docs.rs/jsonwebtoken"
+algorithms = [
+  { name = "HMAC", primitive = "mac", status = "symmetric" },
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "jwt-simple-ml-dsa"
+crate = "jwt-simple"
+group = "jwt-simple"
+versions = ">=0.13.0"
+title = "JSON Web Tokens (jwt-simple, ML-DSA capable)"
+status = "depends"
+note = "Supports ML-DSA-44/65/87 (RFC 9964) since 0.13.0, next to HMAC, RSA, ECDSA and Ed25519. Tokens are post-quantum only when signed with an ML-DSA key."
+reference = "https://docs.rs/jwt-simple"
+algorithms = [
+  { name = "ML-DSA", primitive = "signature", parameter_set = "44", functions = ["sign", "verify"], status = "post-quantum", nist_level = 2 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "65", functions = ["sign", "verify"], status = "post-quantum", nist_level = 3 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "87", functions = ["sign", "verify"], status = "post-quantum", nist_level = 5 },
+  { name = "HMAC", primitive = "mac", status = "symmetric" },
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "jwt-simple-classical"
+crate = "jwt-simple"
+group = "jwt-simple"
+versions = "<0.13.0"
+title = "JSON Web Tokens (jwt-simple, classical only)"
+status = "depends"
+note = "This version supports HMAC, RSA, ECDSA and Ed25519 only."
+fix = "Upgrade to jwt-simple 0.13.0 or later for ML-DSA (RFC 9964)."
+reference = "https://docs.rs/jwt-simple"
+algorithms = [
+  { name = "HMAC", primitive = "mac", status = "symmetric" },
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "josekit"
+crate = "josekit"
+title = "JOSE (josekit)"
+status = "depends"
+note = "Classical JOSE algorithms only; no ML-DSA (checked in 0.10.4)."
+reference = "https://docs.rs/josekit"
+algorithms = [
+  { name = "HMAC", primitive = "mac", status = "symmetric" },
+  { name = "RSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "RSA-OAEP", primitive = "pke", functions = ["encrypt", "decrypt"], status = "quantum-vulnerable" },
+  { name = "ECDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "EdDSA", primitive = "signature", functions = ["sign", "verify"], status = "quantum-vulnerable" },
+  { name = "ECDH-ES", primitive = "key-agree", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "rcgen-aws-lc-rs"
+crate = "rcgen"
+group = "rcgen"
+versions = ">=0.14.10"
+features_all = ["aws_lc_rs"]
+title = "X.509 generation (rcgen, ML-DSA capable)"
+status = "depends"
+note = "The signature algorithm follows the key you use; with the `aws_lc_rs` feature rcgen also supports ML-DSA (PKCS_ML_DSA_44/65/87, checked in 0.14.10)."
+reference = "https://docs.rs/rcgen"
+algorithms = [
+  { name = "ECDSA", primitive = "signature", functions = ["sign"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign"], status = "quantum-vulnerable" },
+  { name = "RSA", primitive = "signature", functions = ["sign"], status = "quantum-vulnerable" },
+  { name = "ML-DSA", primitive = "signature", functions = ["sign"], status = "post-quantum" },
+]
+
+[[rule]]
+id = "rcgen-classical"
+crate = "rcgen"
+group = "rcgen"
+title = "X.509 generation (rcgen)"
+status = "depends"
+note = "The signature algorithm follows the key you use (ECDSA, Ed25519 or RSA here). rcgen 0.14.10 supports ML-DSA when built with the `aws_lc_rs` feature."
+reference = "https://docs.rs/rcgen"
+algorithms = [
+  { name = "ECDSA", primitive = "signature", functions = ["sign"], status = "quantum-vulnerable" },
+  { name = "Ed25519", primitive = "signature", functions = ["sign"], status = "quantum-vulnerable" },
+  { name = "RSA", primitive = "signature", functions = ["sign"], status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "hpke-with-pq"
+crate = "hpke"
+group = "hpke"
+features_any = ["mlkem"]
+title = "HPKE (rust-hpke) with post-quantum KEMs"
+status = "depends"
+note = "The `mlkem` feature (on by default in 0.15.1) adds ML-KEM and the X-Wing hybrid KEM; which KEM is used depends on your code."
+reference = "https://docs.rs/hpke"
+algorithms = [
+  { name = "X-Wing", primitive = "kem", status = "hybrid", nist_level = 3 },
+  { name = "ML-KEM", primitive = "kem", status = "post-quantum" },
+  { name = "DHKEM", primitive = "kem", status = "quantum-vulnerable" },
+]
+
+[[rule]]
+id = "hpke-classical"
+crate = "hpke"
+group = "hpke"
+title = "HPKE (rust-hpke) with classical KEMs only"
+status = "quantum-vulnerable"
+note = "Only Diffie-Hellman based KEMs (X25519 or NIST curves) are compiled in."
+fix = "Enable hpke's `mlkem` feature (default in 0.15.1) and use X-Wing or ML-KEM."
+reference = "https://docs.rs/hpke"
+algorithms = [
+  { name = "DHKEM", primitive = "kem", status = "quantum-vulnerable" },
+]
+
+# ---------------------------------------------------------------------------
+# Post-quantum crates (NIST FIPS 203, 204, 205)
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "ml-kem"
+crate = "ml-kem"
+title = "ML-KEM, FIPS 203 (RustCrypto)"
+note = "The crate README states the implementation has not been independently audited."
+reference = "https://docs.rs/ml-kem"
+algorithms = [
+  { name = "ML-KEM", primitive = "kem", parameter_set = "512", functions = ["keygen", "encapsulate", "decapsulate"], status = "post-quantum", nist_level = 1 },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "768", functions = ["keygen", "encapsulate", "decapsulate"], status = "post-quantum", nist_level = 3 },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "1024", functions = ["keygen", "encapsulate", "decapsulate"], status = "post-quantum", nist_level = 5 },
+]
+
+[[rule]]
+id = "ml-dsa-cve-2026-24850"
+crate = "ml-dsa"
+group = "ml-dsa"
+versions = ">=0.0.4, <0.1.0-rc.4"
+title = "ML-DSA, FIPS 204 (RustCrypto) - affected version"
+status = "known-vulnerable"
+note = "Signature verification accepts signatures with repeated hint indices (CVSS 5.3)."
+fix = "Upgrade ml-dsa to 0.1.0-rc.4 or later."
+reference = "https://docs.rs/ml-dsa"
+advisory = { id = "CVE-2026-24850", url = "https://github.com/RustCrypto/signatures/security/advisories/GHSA-5x2r-hc65-25f9" }
+algorithms = [
+  { name = "ML-DSA", primitive = "signature", parameter_set = "44", functions = ["sign", "verify"], status = "post-quantum", nist_level = 2 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "65", functions = ["sign", "verify"], status = "post-quantum", nist_level = 3 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "87", functions = ["sign", "verify"], status = "post-quantum", nist_level = 5 },
+]
+
+[[rule]]
+id = "ml-dsa"
+crate = "ml-dsa"
+group = "ml-dsa"
+title = "ML-DSA, FIPS 204 (RustCrypto)"
+note = "The crate README states the implementation has not been independently audited."
+reference = "https://docs.rs/ml-dsa"
+algorithms = [
+  { name = "ML-DSA", primitive = "signature", parameter_set = "44", functions = ["sign", "verify"], status = "post-quantum", nist_level = 2 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "65", functions = ["sign", "verify"], status = "post-quantum", nist_level = 3 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "87", functions = ["sign", "verify"], status = "post-quantum", nist_level = 5 },
+]
+
+[[rule]]
+id = "slh-dsa"
+crate = "slh-dsa"
+title = "SLH-DSA, FIPS 205 (RustCrypto)"
+note = "The crate README states the implementation has not been independently audited."
+reference = "https://docs.rs/slh-dsa"
+algorithms = [
+  { name = "SLH-DSA", primitive = "signature", functions = ["sign", "verify"], status = "post-quantum" },
+]
+
+[[rule]]
+id = "libcrux-ml-kem"
+crate = "libcrux-ml-kem"
+title = "ML-KEM, FIPS 203 (libcrux)"
+reference = "https://docs.rs/libcrux-ml-kem"
+algorithms = [
+  { name = "ML-KEM", primitive = "kem", parameter_set = "512", status = "post-quantum", nist_level = 1 },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "768", status = "post-quantum", nist_level = 3 },
+  { name = "ML-KEM", primitive = "kem", parameter_set = "1024", status = "post-quantum", nist_level = 5 },
+]
+
+[[rule]]
+id = "libcrux-ml-dsa"
+crate = "libcrux-ml-dsa"
+title = "ML-DSA, FIPS 204 (libcrux)"
+reference = "https://docs.rs/libcrux-ml-dsa"
+algorithms = [
+  { name = "ML-DSA", primitive = "signature", parameter_set = "44", status = "post-quantum", nist_level = 2 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "65", status = "post-quantum", nist_level = 3 },
+  { name = "ML-DSA", primitive = "signature", parameter_set = "87", status = "post-quantum", nist_level = 5 },
+]
+
+[[rule]]
+id = "fips203"
+crate = "fips203"
+title = "ML-KEM, FIPS 203 (IntegrityChain)"
+reference = "https://docs.rs/fips203"
+algorithms = [
+  { name = "ML-KEM", primitive = "kem", status = "post-quantum" },
+]
+
+[[rule]]
+id = "fips204"
+crate = "fips204"
+title = "ML-DSA, FIPS 204 (IntegrityChain)"
+reference = "https://docs.rs/fips204"
+algorithms = [
+  { name = "ML-DSA", primitive = "signature", status = "post-quantum" },
+]
+
+[[rule]]
+id = "fips205"
+crate = "fips205"
+title = "SLH-DSA, FIPS 205 (IntegrityChain)"
+reference = "https://docs.rs/fips205"
+algorithms = [
+  { name = "SLH-DSA", primitive = "signature", status = "post-quantum" },
+]
+
+[[rule]]
+id = "pqcrypto-mlkem"
+crate = "pqcrypto-mlkem"
+title = "ML-KEM, FIPS 203 (pqcrypto / PQClean)"
+reference = "https://docs.rs/pqcrypto-mlkem"
+algorithms = [
+  { name = "ML-KEM", primitive = "kem", status = "post-quantum" },
+]
+
+[[rule]]
+id = "pqcrypto-mldsa"
+crate = "pqcrypto-mldsa"
+title = "ML-DSA, FIPS 204 (pqcrypto / PQClean)"
+reference = "https://docs.rs/pqcrypto-mldsa"
+algorithms = [
+  { name = "ML-DSA", primitive = "signature", status = "post-quantum" },
+]
+
+[[rule]]
+id = "x-wing"
+crate = "x-wing"
+title = "X-Wing hybrid KEM (RustCrypto)"
+note = "Hybrid KEM built on X25519 and ML-KEM-768."
+reference = "https://docs.rs/x-wing"
+algorithms = [
+  { name = "X-Wing", primitive = "kem", functions = ["keygen", "encapsulate", "decapsulate"], status = "hybrid", nist_level = 3 },
+]
+
+[[rule]]
+id = "oqs"
+crate = "oqs"
+title = "liboqs bindings (Open Quantum Safe)"
+status = "depends"
+note = "Exposes the NIST standards (ML-KEM, ML-DSA) next to algorithms that are pre-standard or not selected by NIST; check which ones you call."
+reference = "https://docs.rs/oqs"
+algorithms = [
+  { name = "ML-KEM", primitive = "kem", status = "post-quantum" },
+  { name = "ML-DSA", primitive = "signature", status = "post-quantum" },
+]
+
+# ---------------------------------------------------------------------------
+# Pre-standard post-quantum crates
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "pqcrypto-kyber"
+crate = "pqcrypto-kyber"
+title = "Kyber (pre-standard ML-KEM)"
+note = "Implements the round-3 Kyber submission, which is not interoperable with FIPS 203 ML-KEM."
+fix = "Migrate to ML-KEM, e.g. pqcrypto-mlkem or ml-kem."
+reference = "https://docs.rs/pqcrypto-kyber"
+algorithms = [
+  { name = "Kyber", primitive = "kem", status = "pre-standard-pq" },
+]
+
+[[rule]]
+id = "pqc-kyber"
+crate = "pqc_kyber"
+title = "Kyber (pre-standard ML-KEM)"
+note = "Implements pre-standard Kyber, which is not interoperable with FIPS 203 ML-KEM."
+fix = "Migrate to ML-KEM, e.g. ml-kem."
+reference = "https://docs.rs/pqc_kyber"
+algorithms = [
+  { name = "Kyber", primitive = "kem", status = "pre-standard-pq" },
+]
+
+[[rule]]
+id = "pqcrypto-dilithium"
+crate = "pqcrypto-dilithium"
+title = "Dilithium (pre-standard ML-DSA)"
+note = "Implements the round-3 Dilithium submission, which is not interoperable with FIPS 204 ML-DSA."
+fix = "Migrate to ML-DSA, e.g. pqcrypto-mldsa or ml-dsa."
+reference = "https://docs.rs/pqcrypto-dilithium"
+algorithms = [
+  { name = "Dilithium", primitive = "signature", status = "pre-standard-pq" },
+]
+
+[[rule]]
+id = "pqcrypto-sphincsplus"
+crate = "pqcrypto-sphincsplus"
+title = "SPHINCS+ (pre-standard SLH-DSA)"
+note = "Implements the SPHINCS+ submission that FIPS 205 SLH-DSA is based on."
+fix = "Migrate to SLH-DSA, e.g. slh-dsa or fips205."
+reference = "https://docs.rs/pqcrypto-sphincsplus"
+algorithms = [
+  { name = "SPHINCS+", primitive = "signature", status = "pre-standard-pq" },
+]
+
+[[rule]]
+id = "pqcrypto-falcon"
+crate = "pqcrypto-falcon"
+title = "Falcon (pre-standard FN-DSA)"
+note = "Falcon is being standardized by NIST as FN-DSA (FIPS 206); this crate implements the Falcon submission."
+reference = "https://docs.rs/pqcrypto-falcon"
+algorithms = [
+  { name = "Falcon", primitive = "signature", status = "pre-standard-pq" },
+]
+
+[[rule]]
+id = "pqcrypto-hqc"
+crate = "pqcrypto-hqc"
+title = "HQC (selected by NIST, not yet a standard)"
+note = "NIST selected HQC as an additional KEM in March 2025; the standard is not final yet."
+reference = "https://docs.rs/pqcrypto-hqc"
+algorithms = [
+  { name = "HQC", primitive = "kem", status = "pre-standard-pq" },
+]
+
+# ---------------------------------------------------------------------------
+# Symmetric primitives (not affected by Shor's algorithm)
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "aes-gcm"
+crate = "aes-gcm"
+title = "AES-GCM (RustCrypto)"
+reference = "https://docs.rs/aes-gcm"
+algorithms = [{ name = "AES-GCM", primitive = "ae", functions = ["encrypt", "decrypt"], status = "symmetric" }]
+
+[[rule]]
+id = "aes-gcm-siv"
+crate = "aes-gcm-siv"
+title = "AES-GCM-SIV (RustCrypto)"
+reference = "https://docs.rs/aes-gcm-siv"
+algorithms = [{ name = "AES-GCM-SIV", primitive = "ae", functions = ["encrypt", "decrypt"], status = "symmetric" }]
+
+[[rule]]
+id = "aes"
+crate = "aes"
+title = "AES block cipher (RustCrypto)"
+reference = "https://docs.rs/aes"
+algorithms = [{ name = "AES", primitive = "block-cipher", functions = ["encrypt", "decrypt"], status = "symmetric" }]
+
+[[rule]]
+id = "chacha20poly1305"
+crate = "chacha20poly1305"
+title = "ChaCha20-Poly1305 (RustCrypto)"
+reference = "https://docs.rs/chacha20poly1305"
+algorithms = [{ name = "ChaCha20-Poly1305", primitive = "ae", functions = ["encrypt", "decrypt"], status = "symmetric" }]
+
+[[rule]]
+id = "chacha20"
+crate = "chacha20"
+title = "ChaCha20 stream cipher (RustCrypto)"
+reference = "https://docs.rs/chacha20"
+algorithms = [{ name = "ChaCha20", primitive = "stream-cipher", functions = ["encrypt", "decrypt"], status = "symmetric" }]
+
+[[rule]]
+id = "sha2"
+crate = "sha2"
+title = "SHA-2 (RustCrypto)"
+reference = "https://docs.rs/sha2"
+algorithms = [{ name = "SHA-2", primitive = "hash", functions = ["digest"], status = "symmetric" }]
+
+[[rule]]
+id = "sha3"
+crate = "sha3"
+title = "SHA-3 and SHAKE (RustCrypto)"
+reference = "https://docs.rs/sha3"
+algorithms = [{ name = "SHA-3", primitive = "hash", functions = ["digest"], status = "symmetric" }]
+
+[[rule]]
+id = "blake2"
+crate = "blake2"
+title = "BLAKE2 (RustCrypto)"
+reference = "https://docs.rs/blake2"
+algorithms = [{ name = "BLAKE2", primitive = "hash", functions = ["digest"], status = "symmetric" }]
+
+[[rule]]
+id = "blake3"
+crate = "blake3"
+title = "BLAKE3"
+reference = "https://docs.rs/blake3"
+algorithms = [{ name = "BLAKE3", primitive = "hash", functions = ["digest"], status = "symmetric" }]
+
+[[rule]]
+id = "hmac"
+crate = "hmac"
+title = "HMAC (RustCrypto)"
+reference = "https://docs.rs/hmac"
+algorithms = [{ name = "HMAC", primitive = "mac", functions = ["tag"], status = "symmetric" }]
+
+[[rule]]
+id = "hkdf"
+crate = "hkdf"
+title = "HKDF (RustCrypto)"
+reference = "https://docs.rs/hkdf"
+algorithms = [{ name = "HKDF", primitive = "kdf", functions = ["keyderive"], status = "symmetric" }]
+
+[[rule]]
+id = "pbkdf2"
+crate = "pbkdf2"
+title = "PBKDF2 (RustCrypto)"
+reference = "https://docs.rs/pbkdf2"
+algorithms = [{ name = "PBKDF2", primitive = "kdf", functions = ["keyderive"], status = "symmetric" }]
+
+[[rule]]
+id = "argon2"
+crate = "argon2"
+title = "Argon2 (RustCrypto)"
+reference = "https://docs.rs/argon2"
+algorithms = [{ name = "Argon2", primitive = "kdf", functions = ["keyderive"], status = "symmetric" }]
+
+[[rule]]
+id = "scrypt"
+crate = "scrypt"
+title = "scrypt (RustCrypto)"
+reference = "https://docs.rs/scrypt"
+algorithms = [{ name = "scrypt", primitive = "kdf", functions = ["keyderive"], status = "symmetric" }]
+
+[[rule]]
+id = "bcrypt"
+crate = "bcrypt"
+title = "bcrypt"
+reference = "https://docs.rs/bcrypt"
+algorithms = [{ name = "bcrypt", primitive = "kdf", functions = ["keyderive"], status = "symmetric" }]
+
+# ---------------------------------------------------------------------------
+# Classically broken primitives
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "md5"
+crate = "md5"
+title = "MD5"
+note = "MD5 collisions are practical; use it only for non-security checksums."
+reference = "https://docs.rs/md5"
+algorithms = [{ name = "MD5", primitive = "hash", functions = ["digest"], status = "classically-broken" }]
+
+[[rule]]
+id = "md-5"
+crate = "md-5"
+title = "MD5 (RustCrypto)"
+note = "MD5 collisions are practical; use it only for non-security checksums."
+reference = "https://docs.rs/md-5"
+algorithms = [{ name = "MD5", primitive = "hash", functions = ["digest"], status = "classically-broken" }]
+
+[[rule]]
+id = "sha1"
+crate = "sha1"
+title = "SHA-1 (RustCrypto)"
+note = "SHA-1 collisions are practical; avoid it for signatures and integrity checks."
+reference = "https://docs.rs/sha1"
+algorithms = [{ name = "SHA-1", primitive = "hash", functions = ["digest"], status = "classically-broken" }]
+
+[[rule]]
+id = "sha-1"
+crate = "sha-1"
+title = "SHA-1 (RustCrypto, old crate name)"
+note = "SHA-1 collisions are practical; avoid it for signatures and integrity checks."
+reference = "https://docs.rs/sha-1"
+algorithms = [{ name = "SHA-1", primitive = "hash", functions = ["digest"], status = "classically-broken" }]
+
+[[rule]]
+id = "des"
+crate = "des"
+title = "DES and 3DES (RustCrypto)"
+note = "DES is broken and 3DES is deprecated; use AES."
+reference = "https://docs.rs/des"
+algorithms = [{ name = "DES/3DES", primitive = "block-cipher", functions = ["encrypt", "decrypt"], status = "classically-broken" }]
+
+[[rule]]
+id = "rc4"
+crate = "rc4"
+title = "RC4 (RustCrypto)"
+note = "RC4 is broken; use AES-GCM or ChaCha20-Poly1305."
+reference = "https://docs.rs/rc4"
+algorithms = [{ name = "RC4", primitive = "stream-cipher", functions = ["encrypt", "decrypt"], status = "classically-broken" }]

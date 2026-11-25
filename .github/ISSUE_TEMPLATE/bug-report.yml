@@ -1,0 +1,23 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Command you ran, what you expected and what you got
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: Output of `cargo cbom --version` and `cargo --version`
+    validations:
+      required: true

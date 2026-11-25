@@ -1,0 +1,31 @@
+name: New or corrected rule
+description: A crate cargo-cbom should know about, or a verdict that is wrong
+labels: ["rules"]
+body:
+  - type: input
+    id: crate
+    attributes:
+      label: Crate
+      description: crates.io name and the version you checked
+      placeholder: "my-crate 1.2.3"
+    validations:
+      required: true
+  - type: textarea
+    id: algorithms
+    attributes:
+      label: Algorithms and conditions
+      description: Which algorithms the crate provides, and which versions or Cargo features change that
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: Link to the code or docs that show it
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What cargo-cbom reports today (if anything)
+      render: text
